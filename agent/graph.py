@@ -4,6 +4,7 @@ from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 from loguru import logger
 import json
+from tools.arxiv_fetcher import fetch_recent_papers, expand_query, check_diversity
 
 load_dotenv()
 
@@ -53,7 +54,36 @@ Generate a search plan. Return ONLY valid JSON, no explanation, no markdown:
     return state
 
 def fetcher(state: DigestState) -> DigestState:
-    logger.info("NODE: fetcher")
+    topic = state.get("current_topic", "")
+    plan = state.get("run_metadata", {}).get("current_plan", {})
+    
+    logger.info(f"NODE: fetcher | topic={topic}")
+    
+    # Ambil semua queries dari planner
+    queries = [plan.get("primary_query", topic)] + plan.get("sub_queries", [])
+    
+    all_papers = []
+    seen_ids = set()
+    
+    for query in queries:
+        try:
+            papers = fetch_recent_papers(query, days=7, max_results=10)
+            for paper in papers:
+                # Deduplicate by arxiv_id
+                if paper["arxiv_id"] not in seen_ids:
+                    seen_ids.add(paper["arxiv_id"])
+                    all_papers.append(paper)
+        except Exception as e:
+            logger.warning(f"Fetcher: failed for query '{query}': {e}")
+            state["errors"].append(f"Fetch failed for query: {query}")
+    
+    logger.info(f"Fetcher: collected {len(all_papers)} unique papers for topic '{topic}'")
+    
+    # Simpan ke state
+    if "raw_papers" not in state:
+        state["raw_papers"] = {}
+    state["raw_papers"][topic] = all_papers
+    
     return state
 
 def query_expander(state: DigestState) -> DigestState:
