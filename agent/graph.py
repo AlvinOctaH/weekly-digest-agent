@@ -1,16 +1,55 @@
 from langgraph.graph import StateGraph, END
 from agent.state import DigestState
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
 from loguru import logger
+import json
 
-# ── Node placeholders ──────────────────────────────────────────────────────────
-# Semua node isinya print dulu — kita isi satu per satu di hari berikutnya
+load_dotenv()
+
+llm = ChatGroq(model="llama-3.3-70b-versatile")
+
+# ── Nodes ──────────────────────────────────────────────────────────────────────
 
 def config_loader(state: DigestState) -> DigestState:
     logger.info("NODE: config_loader")
     return state
 
 def planner(state: DigestState) -> DigestState:
-    logger.info(f"NODE: planner | topic={state.get('current_topic')} | retry={state.get('retry_count', 0)}")
+    topic = state.get("current_topic", "")
+    retry_count = state.get("retry_count", 0)
+    critique_context = state.get("critique_context", "")
+
+    logger.info(f"NODE: planner | topic={topic} | retry={retry_count}")
+
+    critique_section = ""
+    if critique_context:
+        critique_section = f"\nPrevious search was insufficient because: {critique_context}\nAdjust your search angle accordingly."
+
+    prompt = f"""You are planning a search strategy for a weekly AI/ML research digest.
+Topic: {topic}
+{critique_section}
+
+Generate a search plan. Return ONLY valid JSON, no explanation, no markdown:
+{{
+    "primary_query": "most specific search query for this topic",
+    "sub_queries": ["broader angle query", "application-focused query"],
+    "search_angle": "what specific aspect to focus on"
+}}"""
+
+    try:
+        response = llm.invoke(prompt)
+        plan = json.loads(response.content)
+        logger.info(f"Planner generated queries: {plan}")
+    except json.JSONDecodeError:
+        logger.warning("Planner: LLM returned invalid JSON, using fallback")
+        plan = {
+            "primary_query": topic,
+            "sub_queries": [topic + " survey", topic + " applications"],
+            "search_angle": "general overview"
+        }
+
+    state["run_metadata"]["current_plan"] = plan
     return state
 
 def fetcher(state: DigestState) -> DigestState:
@@ -46,10 +85,8 @@ def report_generator(state: DigestState) -> DigestState:
     return state
 
 # ── Routing functions ──────────────────────────────────────────────────────────
-# Ini decision points — agent decide mau ke node mana selanjutnya
 
 def route_fetcher(state: DigestState) -> str:
-    """Kalau paper kurang dari 3, expand query dulu."""
     papers = state.get("raw_papers", {}).get(state.get("current_topic", ""), [])
     if len(papers) < 3:
         logger.info(f"ROUTING: fetcher → query_expander (only {len(papers)} papers)")
@@ -58,7 +95,6 @@ def route_fetcher(state: DigestState) -> str:
     return "diversity_checker"
 
 def route_diversity(state: DigestState) -> str:
-    """Kalau sumber tidak beragam, cari perspektif lain dulu."""
     papers = state.get("raw_papers", {}).get(state.get("current_topic", ""), [])
     authors = set()
     for p in papers:
@@ -70,10 +106,9 @@ def route_diversity(state: DigestState) -> str:
     return "summarizer"
 
 def route_critic(state: DigestState) -> str:
-    """Critic decide: sufficient → synthesizer, insufficient → retry atau paksa lanjut."""
     verdict = state.get("report", {}).get("critic_verdict", "sufficient")
     retry = state.get("retry_count", 0)
-    
+
     if verdict == "insufficient" and retry < 2:
         logger.info(f"ROUTING: critic → planner (retry {retry+1}/2)")
         return "planner"
@@ -87,8 +122,7 @@ def route_critic(state: DigestState) -> str:
 
 def build_graph():
     graph = StateGraph(DigestState)
-    
-    # Add semua node
+
     graph.add_node("config_loader", config_loader)
     graph.add_node("planner", planner)
     graph.add_node("fetcher", fetcher)
@@ -99,11 +133,9 @@ def build_graph():
     graph.add_node("critic", critic)
     graph.add_node("synthesizer", synthesizer)
     graph.add_node("report_generator", report_generator)
-    
-    # Entry point
+
     graph.set_entry_point("config_loader")
-    
-    # Fixed edges (selalu ke node yang sama)
+
     graph.add_edge("config_loader", "planner")
     graph.add_edge("planner", "fetcher")
     graph.add_edge("query_expander", "diversity_checker")
@@ -111,10 +143,9 @@ def build_graph():
     graph.add_edge("summarizer", "critic")
     graph.add_edge("synthesizer", "report_generator")
     graph.add_edge("report_generator", END)
-    
-    # Conditional edges (decision points)
+
     graph.add_conditional_edges("fetcher", route_fetcher)
     graph.add_conditional_edges("diversity_checker", route_diversity)
     graph.add_conditional_edges("critic", route_critic)
-    
+
     return graph.compile()
