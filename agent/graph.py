@@ -234,7 +234,77 @@ Return ONLY valid JSON, no explanation, no markdown:
     return state
 
 def critic(state: DigestState) -> DigestState:
-    logger.info("NODE: critic")
+    topic = state.get("current_topic", "")
+    summaries = state.get("summaries", {}).get(topic, [])
+    retry_count = state.get("retry_count", 0)
+
+    logger.info(f"NODE: critic | topic={topic} | summaries={len(summaries)} | retry={retry_count}")
+
+    if not summaries:
+        logger.warning("Critic: no summaries to evaluate, forcing insufficient")
+        state["report"]["critic_verdict"] = "insufficient"
+        state["critique_context"] = "No papers found. Try different search terms."
+        state["retry_count"] = retry_count + 1
+        return state
+
+    summaries_text = json.dumps([{
+        "title": s["title"],
+        "key_contribution": s["key_contribution"],
+        "why_it_matters": s["why_it_matters"]
+    } for s in summaries], indent=2)
+
+    prompt = f"""You are evaluating the quality of a weekly AI/ML research digest.
+Topic: {topic}
+Number of papers collected: {len(summaries)}
+
+Summaries:
+{summaries_text}
+
+Evaluate on 3 dimensions:
+1. Coverage: are the main aspects of this topic covered?
+2. Depth: are the summaries informative enough?
+3. Diversity: are there different perspectives and approaches?
+
+Use "sufficient" only if ALL scores >= 6.
+Return ONLY valid JSON, no explanation, no markdown:
+{{
+    "verdict": "sufficient" or "insufficient",
+    "coverage_score": <1-10>,
+    "depth_score": <1-10>,
+    "diversity_score": <1-10>,
+    "critique_text": "specific reason if insufficient, null if sufficient",
+    "specific_gaps": ["gap 1", "gap 2"]
+}}"""
+
+    try:
+        response = llm.invoke(prompt)
+        evaluation = json.loads(response.content)
+
+        verdict = evaluation.get("verdict", "sufficient")
+        coverage = evaluation.get("coverage_score", 0)
+        depth = evaluation.get("depth_score", 0)
+        diversity = evaluation.get("diversity_score", 0)
+
+        logger.info(f"Critic verdict: {verdict} | coverage={coverage} depth={depth} diversity={diversity}")
+
+        state["report"]["critic_verdict"] = verdict
+        state["report"]["critic_scores"] = {
+            "coverage": coverage,
+            "depth": depth,
+            "diversity": diversity
+        }
+
+        if verdict == "insufficient":
+            state["critique_context"] = evaluation.get("critique_text", "")
+            state["retry_count"] = retry_count + 1
+            logger.info(f"Critique: {state['critique_context']}")
+        else:
+            state["critique_context"] = ""
+
+    except json.JSONDecodeError:
+        logger.warning("Critic: invalid JSON, defaulting to sufficient")
+        state["report"]["critic_verdict"] = "sufficient"
+
     return state
 
 def synthesizer(state: DigestState) -> DigestState:
