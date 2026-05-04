@@ -189,7 +189,48 @@ Return ONLY valid JSON, no explanation, no markdown:
     return state
 
 def summarizer(state: DigestState) -> DigestState:
-    logger.info("NODE: summarizer")
+    topic = state.get("current_topic", "")
+    papers = state.get("evaluated_papers", {}).get(topic, [])
+
+    logger.info(f"NODE: summarizer | summarizing {len(papers)} papers for topic '{topic}'")
+
+    summaries = []
+
+    for paper in papers:
+        prompt = f"""Summarize this AI/ML research paper for a weekly digest.
+
+Title: {paper['title']}
+Abstract: {paper['abstract']}
+
+Return ONLY valid JSON, no explanation, no markdown:
+{{
+    "key_contribution": "what is the main contribution in 1 sentence",
+    "methodology": "how they did it in 1 sentence",
+    "main_result": "what they achieved in 1 sentence",
+    "why_it_matters": "why this is important for the field in 1 sentence"
+}}"""
+
+        try:
+            response = llm.invoke(prompt)
+            summary = json.loads(response.content)
+            summary["title"] = paper["title"]
+            summary["url"] = paper["url"]
+            summary["authors"] = paper["authors"]
+            summary["published_date"] = paper["published_date"]
+            summary["avg_score"] = paper.get("avg_score", 0)
+            summaries.append(summary)
+            logger.info(f"Summarized: '{paper['title'][:50]}'")
+
+        except json.JSONDecodeError:
+            logger.warning(f"Summarizer: invalid JSON for '{paper['title'][:40]}', skipping")
+
+        time.sleep(1)
+
+    if "summaries" not in state:
+        state["summaries"] = {}
+    state["summaries"][topic] = summaries
+
+    logger.info(f"Summarizer: created {len(summaries)} summaries for topic '{topic}'")
     return state
 
 def critic(state: DigestState) -> DigestState:
