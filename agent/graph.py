@@ -308,11 +308,142 @@ Return ONLY valid JSON, no explanation, no markdown:
     return state
 
 def synthesizer(state: DigestState) -> DigestState:
-    logger.info("NODE: synthesizer")
+    topic = state.get("current_topic", "")
+    summaries = state.get("summaries", {}).get(topic, [])
+    partial = state.get("partial_coverage", False)
+
+    logger.info(f"NODE: synthesizer | topic={topic} | partial={partial}")
+
+    if not summaries:
+        state["synthesis"][topic] = {
+            "weekly_trend": "No papers found this week",
+            "breakthrough": None,
+            "open_problems": [],
+            "recommended_paper": None,
+            "tldr": f"No new papers found for '{topic}' this week."
+        }
+        return state
+
+    summaries_text = json.dumps([{
+        "title": s["title"],
+        "key_contribution": s["key_contribution"],
+        "main_result": s["main_result"],
+        "why_it_matters": s["why_it_matters"]
+    } for s in summaries], indent=2)
+
+    prompt = f"""You are synthesizing a weekly AI/ML research digest.
+Topic: {topic}
+{"NOTE: Coverage may be incomplete this week." if partial else ""}
+
+Papers this week:
+{summaries_text}
+
+Return ONLY valid JSON, no explanation, no markdown:
+{{
+    "weekly_trend": "what direction is this field moving this week in 1-2 sentences",
+    "breakthrough": "most significant finding this week, or null if none",
+    "open_problems": ["problem 1", "problem 2"],
+    "recommended_paper": "title of the most important paper",
+    "tldr": "1 sentence summary of the week in this topic"
+}}"""
+
+    try:
+        response = llm.invoke(prompt)
+        synthesis = json.loads(response.content)
+        if partial:
+            synthesis["coverage_warning"] = "Partial coverage — some papers may be missing"
+        state["synthesis"][topic] = synthesis
+        logger.info(f"Synthesizer: completed for topic '{topic}'")
+
+    except json.JSONDecodeError:
+        logger.warning("Synthesizer: invalid JSON, using fallback")
+        state["synthesis"][topic] = {
+            "weekly_trend": "Unable to synthesize",
+            "breakthrough": None,
+            "open_problems": [],
+            "recommended_paper": None,
+            "tldr": "Synthesis failed"
+        }
+
     return state
 
+
 def report_generator(state: DigestState) -> DigestState:
+    from datetime import datetime
+
     logger.info("NODE: report_generator")
+
+    # Hitung week number
+    now = datetime.now()
+    week_num = now.strftime("%Y-W%W")
+
+    # Build final report dict
+    report = {
+        "week": week_num,
+        "generated_at": now.strftime("%Y-%m-%d %H:%M"),
+        "topics": {}
+    }
+
+    for topic in state.get("topics", []):
+        report["topics"][topic] = {
+            "synthesis": state.get("synthesis", {}).get(topic, {}),
+            "papers": state.get("summaries", {}).get(topic, []),
+            "critic_scores": state.get("report", {}).get("critic_scores", {}),
+            "retry_count": state.get("retry_count", 0),
+            "partial_coverage": state.get("partial_coverage", False)
+        }
+
+    state["report"].update(report)
+
+    # Buat folder output
+    import os
+    output_dir = f"output/digest_{week_num}"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Tulis JSON
+    import json
+    json_path = f"{output_dir}/digest.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    logger.info(f"Report saved: {json_path}")
+
+    # Tulis Markdown
+    md_path = f"{output_dir}/digest.md"
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(f"# Weekly AI/ML Digest — {week_num}\n")
+        f.write(f"Generated: {report['generated_at']}\n\n")
+
+        for topic, data in report["topics"].items():
+            synth = data["synthesis"]
+            f.write(f"## {topic.title()}\n\n")
+
+            if data.get("partial_coverage"):
+                f.write("> ⚠️ Partial coverage this week\n\n")
+
+            f.write(f"**TL;DR:** {synth.get('tldr', '-')}\n\n")
+            f.write(f"**Weekly Trend:** {synth.get('weekly_trend', '-')}\n\n")
+
+            if synth.get("breakthrough"):
+                f.write(f"**Breakthrough:** {synth.get('breakthrough')}\n\n")
+
+            if synth.get("open_problems"):
+                f.write("**Open Problems:**\n")
+                for p in synth["open_problems"]:
+                    f.write(f"- {p}\n")
+                f.write("\n")
+
+            f.write("### Papers This Week\n\n")
+            for paper in data["papers"]:
+                f.write(f"#### [{paper['title']}]({paper['url']})\n")
+                f.write(f"*{', '.join(paper['authors'][:3])}*\n\n")
+                f.write(f"- **Contribution:** {paper['key_contribution']}\n")
+                f.write(f"- **Method:** {paper['methodology']}\n")
+                f.write(f"- **Result:** {paper['main_result']}\n")
+                f.write(f"- **Why it matters:** {paper['why_it_matters']}\n\n")
+
+    logger.info(f"Markdown saved: {md_path}")
+    logger.info(f"Report generator complete: {len(state.get('topics', []))} topics, output at {output_dir}")
+
     return state
 
 # ── Routing functions ──────────────────────────────────────────────────────────
