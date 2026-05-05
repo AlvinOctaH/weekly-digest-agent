@@ -1,6 +1,7 @@
 import arxiv
 from datetime import datetime, timedelta, timezone
 from loguru import logger
+import time
 
 def fetch_recent_papers(query: str, days: int = 7, max_results: int = 10) -> list[dict]:
     """Fetch papers from ArXiv from the last N days."""
@@ -28,6 +29,7 @@ def fetch_recent_papers(query: str, days: int = 7, max_results: int = 10) -> lis
             "arxiv_id": result.entry_id.split("/")[-1]
         })
     
+    time.sleep(3)
     logger.info(f"Fetched {len(papers)} papers for query: '{query}'")
     return papers[:max_results]
 

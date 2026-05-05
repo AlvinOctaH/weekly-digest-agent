@@ -4,6 +4,7 @@ from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 from loguru import logger
 from tools.arxiv_fetcher import fetch_recent_papers, expand_query, check_diversity
+from utils.seen_papers import is_seen, mark_seen, get_seen_count
 import json
 import time
 
@@ -70,8 +71,9 @@ def fetcher(state: DigestState) -> DigestState:
             papers = fetch_recent_papers(query, days=7, max_results=10)
             for paper in papers:
                 if paper["arxiv_id"] not in seen_ids:
-                    seen_ids.add(paper["arxiv_id"])
-                    all_papers.append(paper)
+                    if paper["arxiv_id"] not in seen_ids and not is_seen(paper["arxiv_id"]):
+                        seen_ids.add(paper["arxiv_id"])
+                        all_papers.append(paper)
         except Exception as e:
             logger.warning(f"Fetcher: failed for query '{query}': {e}")
             state["errors"].append(f"Fetch failed for query: {query}")
@@ -218,6 +220,7 @@ Return ONLY valid JSON, no explanation, no markdown:
             summary["authors"] = paper["authors"]
             summary["published_date"] = paper["published_date"]
             summary["avg_score"] = paper.get("avg_score", 0)
+            summary["arxiv_id"] = paper["arxiv_id"]
             summaries.append(summary)
             logger.info(f"Summarized: '{paper['title'][:50]}'")
 
@@ -443,6 +446,13 @@ def report_generator(state: DigestState) -> DigestState:
 
     logger.info(f"Markdown saved: {md_path}")
     logger.info(f"Report generator complete: {len(state.get('topics', []))} topics, output at {output_dir}")
+
+    for topic in state.get("topics", []):
+        papers = state.get("summaries", {}).get(topic, [])
+        if papers:
+            mark_seen(papers, topic)
+
+    logger.info(f"Total seen papers in database: {get_seen_count()}")
 
     return state
 
