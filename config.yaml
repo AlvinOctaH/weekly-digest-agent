@@ -7,3 +7,4 @@ min_relevance_score: 6
 schedule:
   day_of_week: mon
   hour: 8
+  minute: 0

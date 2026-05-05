@@ -78,9 +78,9 @@ def show_status():
 
 
 def start_scheduler():
-    """Jalankan APScheduler untuk otomatisasi mingguan."""
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
 
     config = load_config()
     schedule = config.get("schedule", {})
@@ -88,16 +88,29 @@ def start_scheduler():
     day = schedule.get("day_of_week", "mon")
     hour = schedule.get("hour", 8)
     minute = schedule.get("minute", 0)
+    test_interval = schedule.get("test_interval_minutes", None)
 
     scheduler = BlockingScheduler()
-    scheduler.add_job(
-        run_digest,
-        trigger=CronTrigger(day_of_week=day, hour=hour, minute=minute),
-        id="weekly_digest",
-        name="Weekly AI/ML Digest"
-    )
 
-    logger.info(f"Scheduler started. Next run: every {day} at {hour:02d}:{minute:02d}")
+    if test_interval:
+        # Mode test: jalankan setiap N menit
+        scheduler.add_job(
+            run_digest,
+            trigger=IntervalTrigger(minutes=test_interval),
+            id="weekly_digest",
+            name="Weekly AI/ML Digest (TEST MODE)"
+        )
+        logger.info(f"TEST MODE: Scheduler running every {test_interval} minutes")
+    else:
+        # Mode production: jalankan setiap Senin
+        scheduler.add_job(
+            run_digest,
+            trigger=CronTrigger(day_of_week=day, hour=hour, minute=minute),
+            id="weekly_digest",
+            name="Weekly AI/ML Digest"
+        )
+        logger.info(f"Scheduler started. Next run: every {day} at {hour:02d}:{minute:02d}")
+
     logger.info("Press Ctrl+C to stop.")
 
     try:
