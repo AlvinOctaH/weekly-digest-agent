@@ -1,0 +1,45 @@
+{
+  "week": "2026-W18",
+  "generated_at": "2026-05-05 14:28",
+  "topics": {
+    "retrieval augmented generation": {
+      "synthesis": {},
+      "papers": [],
+      "critic_scores": {
+        "coverage": 2,
+        "depth": 8,
+        "diversity": 1
+      },
+      "retry_count": 2,
+      "partial_coverage": false
+    },
+    "LLM reasoning": {
+      "synthesis": {
+        "weekly_trend": "No papers found this week",
+        "breakthrough": null,
+        "open_problems": [],
+        "recommended_paper": null,
+        "tldr": "No new papers found for 'LLM reasoning' this week."
+      },
+      "papers": [],
+      "critic_scores": {
+        "coverage": 2,
+        "depth": 8,
+        "diversity": 1
+      },
+      "retry_count": 2,
+      "partial_coverage": false
+    },
+    "multimodal learning": {
+      "synthesis": {},
+      "papers": [],
+      "critic_scores": {
+        "coverage": 2,
+        "depth": 8,
+        "diversity": 1
+      },
+      "retry_count": 2,
+      "partial_coverage": false
+    }
+  }
+}
